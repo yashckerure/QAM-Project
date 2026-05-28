@@ -59,87 +59,102 @@ module qam_mapper #(
     end
 
     // -------------------------------------------------------------------------
-    // Split sym_bits into i_gray and q_gray (both right-justified)
-    //
-    //   I-half occupies positions [bits_used-1 : bps_axis]
-    //   Q-half occupies positions [bps_axis-1 : 0]
-    //
-    // For each axis we collect bps_axis bits MSB-first into the LSBs of
-    // i_gray / q_gray (so i_gray[bps_axis-1] is the I-MSB).
+    // Extract interleaved I and Q bits
     // -------------------------------------------------------------------------
-    reg [3:0] i_gray, q_gray;
-    integer k;
+    reg [3:0] i_bits, q_bits;
     always @(*) begin
-        i_gray = 4'd0;
-        q_gray = 4'd0;
-        for (k = 0; k < 4; k = k + 1) begin
-            if (k < bps_axis) begin
-                i_gray[k] = s_axis_tdata[bps_axis + k];   // upper half, indexed from low
-                q_gray[k] = s_axis_tdata[k];              // lower half
+        i_bits = 4'd0;
+        q_bits = 4'd0;
+        case (bps_axis)
+            3'd1: begin
+                i_bits[0] = s_axis_tdata[1];
+                q_bits[0] = s_axis_tdata[0];
             end
-        end
+            3'd2: begin
+                i_bits[1] = s_axis_tdata[3];
+                q_bits[1] = s_axis_tdata[2];
+                i_bits[0] = s_axis_tdata[1];
+                q_bits[0] = s_axis_tdata[0];
+            end
+            3'd3: begin
+                i_bits[2] = s_axis_tdata[5];
+                q_bits[2] = s_axis_tdata[4];
+                i_bits[1] = s_axis_tdata[3];
+                q_bits[1] = s_axis_tdata[2];
+                i_bits[0] = s_axis_tdata[1];
+                q_bits[0] = s_axis_tdata[0];
+            end
+            3'd4: begin
+                i_bits[3] = s_axis_tdata[7];
+                q_bits[3] = s_axis_tdata[6];
+                i_bits[2] = s_axis_tdata[5];
+                q_bits[2] = s_axis_tdata[4];
+                i_bits[1] = s_axis_tdata[3];
+                q_bits[1] = s_axis_tdata[2];
+                i_bits[0] = s_axis_tdata[1];
+                q_bits[0] = s_axis_tdata[0];
+            end
+            default: begin
+                i_bits[0] = s_axis_tdata[1];
+                q_bits[0] = s_axis_tdata[0];
+            end
+        endcase
     end
 
     // -------------------------------------------------------------------------
-    // Gray-to-binary per axis (MSB unchanged, ripple XOR downward).
-    // Process all 4 bit positions unconditionally; masking is implicit because
-    // unused upper i_gray/q_gray bits are zero.
+    // Compute 3GPP recursive magnitude
     // -------------------------------------------------------------------------
-    reg [3:0] i_bin, q_bin;
-    always @(*) begin
-        i_bin[3] = i_gray[3];
-        i_bin[2] = i_bin[3] ^ i_gray[2];
-        i_bin[1] = i_bin[2] ^ i_gray[1];
-        i_bin[0] = i_bin[1] ^ i_gray[0];
-
-        q_bin[3] = q_gray[3];
-        q_bin[2] = q_bin[3] ^ q_gray[2];
-        q_bin[1] = q_bin[2] ^ q_gray[1];
-        q_bin[0] = q_bin[1] ^ q_gray[0];
-    end
-
-    // -------------------------------------------------------------------------
-    // Extract the valid binary bits per mode, compute PAM level, scale to Q5.10
-    //   level = 2*binary - (2^N - 1)
-    //   scaled = level << FRAC_W
-    // -------------------------------------------------------------------------
-    reg signed [5:0] i_level, q_level;   // 6 bits is enough for +-15
-    reg signed [5:0] offset;
-    reg [3:0]        i_bin_eff, q_bin_eff;
+    reg [4:0] i_mag, q_mag;
     always @(*) begin
         case (bps_axis)
             3'd1: begin
-                i_bin_eff = {3'd0, i_bin[0]};
-                q_bin_eff = {3'd0, q_bin[0]};
-                offset    = 6'sd1;
+                i_mag = 5'd1;
+                q_mag = 5'd1;
             end
             3'd2: begin
-                i_bin_eff = {2'd0, i_bin[1:0]};
-                q_bin_eff = {2'd0, q_bin[1:0]};
-                offset    = 6'sd3;
+                i_mag = 5'd1 + 2*i_bits[0];
+                q_mag = 5'd1 + 2*q_bits[0];
             end
             3'd3: begin
-                i_bin_eff = {1'd0, i_bin[2:0]};
-                q_bin_eff = {1'd0, q_bin[2:0]};
-                offset    = 6'sd7;
+                i_mag = i_bits[1] ? (5'd4 + (5'd1 + 2*i_bits[0])) : (5'd4 - (5'd1 + 2*i_bits[0]));
+                q_mag = q_bits[1] ? (5'd4 + (5'd1 + 2*q_bits[0])) : (5'd4 - (5'd1 + 2*q_bits[0]));
             end
             3'd4: begin
-                i_bin_eff = i_bin;
-                q_bin_eff = q_bin;
-                offset    = 6'sd15;
+                i_mag = i_bits[2] ? (5'd8 + (i_bits[1] ? (5'd4 + (5'd1 + 2*i_bits[0])) : (5'd4 - (5'd1 + 2*i_bits[0])))) 
+                                  : (5'd8 - (i_bits[1] ? (5'd4 + (5'd1 + 2*i_bits[0])) : (5'd4 - (5'd1 + 2*i_bits[0]))));
+                q_mag = q_bits[2] ? (5'd8 + (q_bits[1] ? (5'd4 + (5'd1 + 2*q_bits[0])) : (5'd4 - (5'd1 + 2*q_bits[0]))))
+                                  : (5'd8 - (q_bits[1] ? (5'd4 + (5'd1 + 2*q_bits[0])) : (5'd4 - (5'd1 + 2*q_bits[0]))));
             end
             default: begin
-                i_bin_eff = 4'd0;
-                q_bin_eff = 4'd0;
-                offset    = 6'sd3;
+                i_mag = 5'd1;
+                q_mag = 5'd1;
             end
         endcase
-        i_level = $signed({1'b0, i_bin_eff, 1'b0}) - offset;
-        q_level = $signed({1'b0, q_bin_eff, 1'b0}) - offset;
     end
 
-    wire signed [DATA_W-1:0] i_q510 = $signed(i_level) <<< FRAC_W;
-    wire signed [DATA_W-1:0] q_q510 = $signed(q_level) <<< FRAC_W;
+    // -------------------------------------------------------------------------
+    // Scale and apply sign
+    // -------------------------------------------------------------------------
+    reg [9:0] scale_factor;
+    always @(*) begin
+        case (qam_mode)
+            3'd0: scale_factor = 10'd724;  // QPSK:    round(1/sqrt(2) * 1024)
+            3'd1: scale_factor = 10'd324;  // 16-QAM:  round(1/sqrt(10) * 1024)
+            3'd2: scale_factor = 10'd158;  // 64-QAM:  round(1/sqrt(42) * 1024)
+            3'd3: scale_factor = 10'd79;   // 256-QAM: round(1/sqrt(170) * 1024)
+            default: scale_factor = 10'd724;
+        endcase
+    end
+
+    wire [14:0] i_scaled = i_mag * scale_factor;
+    wire [14:0] q_scaled = q_mag * scale_factor;
+
+    // The MSB is the sign bit
+    wire i_sign = i_bits[bps_axis - 1];
+    wire q_sign = q_bits[bps_axis - 1];
+
+    wire signed [DATA_W-1:0] i_q510 = i_sign ? -$signed({1'b0, i_scaled}) : $signed({1'b0, i_scaled});
+    wire signed [DATA_W-1:0] q_q510 = q_sign ? -$signed({1'b0, q_scaled}) : $signed({1'b0, q_scaled});
 
     // -------------------------------------------------------------------------
     // Register outputs, one-cycle pipeline behind s_axis_tvalid

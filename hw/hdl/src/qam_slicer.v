@@ -53,88 +53,122 @@ module qam_slicer #(
     end
 
     // -------------------------------------------------------------------------
-    // Step 1: round to nearest odd integer level
-    //
-    // For sample s (Q5.10), the half-step index is:
-    //   k = floor( (s + 2^FRAC_W) / 2^(FRAC_W+1) )       symmetric rounding
-    // Then level = 2*k - 1.
-    //
-    // Effectively: add (1 << FRAC_W), arithmetic-shift right by (FRAC_W+1),
-    //              then convert to odd level by (2*k - 1).
-    //
-    // We use the SAR of the signed input directly; the shift count is
-    // FRAC_W+1 = 11 for FRAC_W=10.
+    // Extract absolute value
     // -------------------------------------------------------------------------
-    wire signed [DATA_W-1:0] i_biased = i_in + (1 <<< FRAC_W);
-    wire signed [DATA_W-1:0] q_biased = q_in + (1 <<< FRAC_W);
-
-    wire signed [DATA_W-1:0] i_kfull  = i_biased >>> (FRAC_W + 1);   // half-step index
-    wire signed [DATA_W-1:0] q_kfull  = q_biased >>> (FRAC_W + 1);
-
-    // Convert half-step index -> odd level:  level = 2*k - 1
-    wire signed [DATA_W:0] i_level_raw = (i_kfull <<< 1) - 1;
-    wire signed [DATA_W:0] q_level_raw = (q_kfull <<< 1) - 1;
+    wire i_sign = i_in[DATA_W-1];
+    wire q_sign = q_in[DATA_W-1];
+    
+    wire [DATA_W-1:0] i_abs = i_sign ? -i_in : i_in;
+    wire [DATA_W-1:0] q_abs = q_sign ? -q_in : q_in;
 
     // -------------------------------------------------------------------------
-    // Step 2: clip to legal range [-max_level, +max_level]
+    // Multiply by inverse scale factor
     // -------------------------------------------------------------------------
-    reg signed [5:0] i_level, q_level;
+    reg [16:0] inv_scale;
     always @(*) begin
-        // I
-        if      (i_level_raw >  $signed({{(DATA_W+1-6){max_level[5]}}, max_level})) i_level =  max_level;
-        else if (i_level_raw < -$signed({{(DATA_W+1-6){max_level[5]}}, max_level})) i_level = -max_level;
-        else                                                                       i_level =  i_level_raw[5:0];
+        case (qam_mode)
+            3'd0: inv_scale = 17'd5793;  // QPSK:    round(sqrt(2) * 4096)
+            3'd1: inv_scale = 17'd12953; // 16-QAM:  round(sqrt(10) * 4096)
+            3'd2: inv_scale = 17'd26545; // 64-QAM:  round(sqrt(42) * 4096)
+            3'd3: inv_scale = 17'd53406; // 256-QAM: round(sqrt(170) * 4096)
+            default: inv_scale = 17'd5793;
+        endcase
+    end
 
-        // Q
-        if      (q_level_raw >  $signed({{(DATA_W+1-6){max_level[5]}}, max_level})) q_level =  max_level;
-        else if (q_level_raw < -$signed({{(DATA_W+1-6){max_level[5]}}, max_level})) q_level = -max_level;
-        else                                                                       q_level =  q_level_raw[5:0];
+    // Product is Q5.10 * QX.12 = Q(5+X).22
+    wire [31:0] i_prod = i_abs * inv_scale;
+    wire [31:0] q_prod = q_abs * inv_scale;
+
+    // Add 1<<21 for rounding, then shift right by 22
+    wire [4:0] i_mag_est = (i_prod + (1 << 21)) >> 22;
+    wire [4:0] q_mag_est = (q_prod + (1 << 21)) >> 22;
+
+    // -------------------------------------------------------------------------
+    // Clip to max magnitude
+    // -------------------------------------------------------------------------
+    reg [4:0] max_mag;
+    always @(*) begin
+        case (bps_axis)
+            3'd1: max_mag = 5'd1;
+            3'd2: max_mag = 5'd3;
+            3'd3: max_mag = 5'd7;
+            3'd4: max_mag = 5'd15;
+            default: max_mag = 5'd3;
+        endcase
+    end
+
+    wire [4:0] i_clip = (i_mag_est > max_mag) ? max_mag : i_mag_est;
+    wire [4:0] q_clip = (q_mag_est > max_mag) ? max_mag : q_mag_est;
+
+    wire [3:0] i_val = i_clip >> 1;
+    wire [3:0] q_val = q_clip >> 1;
+
+    // -------------------------------------------------------------------------
+    // Decode 3GPP magnitude to bits
+    // -------------------------------------------------------------------------
+    reg [3:0] i_bits, q_bits;
+    always @(*) begin
+        i_bits = 4'd0;
+        q_bits = 4'd0;
+        
+        // Sign bits
+        i_bits[bps_axis-1] = i_sign;
+        q_bits[bps_axis-1] = q_sign;
+
+        if (bps_axis > 1) begin
+            i_bits[bps_axis-2] = i_val[bps_axis-2];
+            q_bits[bps_axis-2] = q_val[bps_axis-2];
+        end
+        if (bps_axis > 2) begin
+            i_bits[bps_axis-3] = i_val[bps_axis-3] ^ ~i_val[bps_axis-2];
+            q_bits[bps_axis-3] = q_val[bps_axis-3] ^ ~q_val[bps_axis-2];
+        end
+        if (bps_axis > 3) begin
+            i_bits[bps_axis-4] = i_val[bps_axis-4] ^ ~i_val[bps_axis-3];
+            q_bits[bps_axis-4] = q_val[bps_axis-4] ^ ~q_val[bps_axis-3];
+        end
     end
 
     // -------------------------------------------------------------------------
-    // Step 3: level -> binary index
-    //   binary = (level + max_level) / 2,  in range [0, 2^N - 1]
-    // -------------------------------------------------------------------------
-    wire signed [6:0] i_bin_signed = (i_level + max_level) >>> 1;
-    wire signed [6:0] q_bin_signed = (q_level + max_level) >>> 1;
-    wire [3:0] i_bin = i_bin_signed[3:0];
-    wire [3:0] q_bin = q_bin_signed[3:0];
-
-    // -------------------------------------------------------------------------
-    // Step 4: binary -> Gray
-    //   gray[N-1] = binary[N-1]
-    //   gray[i]   = binary[i+1] XOR binary[i]
-    // (Process all 4 bit positions; unused upper bits are zero.)
-    // -------------------------------------------------------------------------
-    reg [3:0] i_gray, q_gray;
-    always @(*) begin
-        i_gray[3] = i_bin[3];
-        i_gray[2] = i_bin[3] ^ i_bin[2];
-        i_gray[1] = i_bin[2] ^ i_bin[1];
-        i_gray[0] = i_bin[1] ^ i_bin[0];
-
-        q_gray[3] = q_bin[3];
-        q_gray[2] = q_bin[3] ^ q_bin[2];
-        q_gray[1] = q_bin[2] ^ q_bin[1];
-        q_gray[0] = q_bin[1] ^ q_bin[0];
-    end
-
-    // -------------------------------------------------------------------------
-    // Step 5: reassemble symbol with I in upper, Q in lower (MSB-first)
-    //   For bps_axis = N, the Qm-bit symbol is:
-    //     sym[2N-1 : N] = i_gray[N-1 : 0]
-    //     sym[N-1   : 0] = q_gray[N-1 : 0]
+    // Interleave I and Q back to symbol
     // -------------------------------------------------------------------------
     reg [MAX_BPS-1:0] sym_pack;
-    integer k;
     always @(*) begin
         sym_pack = {MAX_BPS{1'b0}};
-        for (k = 0; k < 4; k = k + 1) begin
-            if (k < bps_axis) begin
-                sym_pack[bps_axis + k] = i_gray[k];   // upper half
-                sym_pack[k]            = q_gray[k];   // lower half
+        case (bps_axis)
+            3'd1: begin
+                sym_pack[1] = i_bits[0];
+                sym_pack[0] = q_bits[0];
             end
-        end
+            3'd2: begin
+                sym_pack[3] = i_bits[1];
+                sym_pack[2] = q_bits[1];
+                sym_pack[1] = i_bits[0];
+                sym_pack[0] = q_bits[0];
+            end
+            3'd3: begin
+                sym_pack[5] = i_bits[2];
+                sym_pack[4] = q_bits[2];
+                sym_pack[3] = i_bits[1];
+                sym_pack[2] = q_bits[1];
+                sym_pack[1] = i_bits[0];
+                sym_pack[0] = q_bits[0];
+            end
+            3'd4: begin
+                sym_pack[7] = i_bits[3];
+                sym_pack[6] = q_bits[3];
+                sym_pack[5] = i_bits[2];
+                sym_pack[4] = q_bits[2];
+                sym_pack[3] = i_bits[1];
+                sym_pack[2] = q_bits[1];
+                sym_pack[1] = i_bits[0];
+                sym_pack[0] = q_bits[0];
+            end
+            default: begin
+                sym_pack[1] = i_bits[0];
+                sym_pack[0] = q_bits[0];
+            end
+        endcase
     end
 
     // -------------------------------------------------------------------------
