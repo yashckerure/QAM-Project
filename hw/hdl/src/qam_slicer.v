@@ -31,7 +31,7 @@ module qam_slicer #(
     input  wire                       m_axis_tready
 );
 
-    assign s_axis_tready = 1'b1;
+
 
     wire signed [DATA_W-1:0] i_in = s_axis_tdata[DATA_W-1:0];
     wire signed [DATA_W-1:0] q_in = s_axis_tdata[2*DATA_W-1:DATA_W];
@@ -172,19 +172,24 @@ module qam_slicer #(
     end
 
     // -------------------------------------------------------------------------
-    // Register outputs, one-cycle pipeline behind s_axis_tvalid
+    // Register outputs, one-cycle pipeline with AXI stall logic
     // -------------------------------------------------------------------------
+    wire out_ready = !m_axis_tvalid || m_axis_tready;
+    assign s_axis_tready = out_ready;
+
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             m_axis_tdata  <= {MAX_BPS{1'b0}};
             m_axis_tuser  <= 4'd0;
             m_axis_tvalid <= 1'b0;
-        end else if (s_axis_tvalid) begin
-            m_axis_tdata  <= sym_pack;
-            m_axis_tuser  <= bps_total;
-            m_axis_tvalid <= 1'b1;
         end else begin
-            m_axis_tvalid <= 1'b0;
+            if (s_axis_tready) begin
+                m_axis_tvalid <= s_axis_tvalid;
+                if (s_axis_tvalid) begin
+                    m_axis_tdata <= sym_pack;
+                    m_axis_tuser <= bps_total;
+                end
+            end
         end
     end
 

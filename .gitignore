@@ -25,3 +25,4 @@ results.xml
 *.sim/
 *.wdb
 *.wcfg
+hw/build/vivado_project/

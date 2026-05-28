@@ -12,13 +12,23 @@
 ```
 QAM-Project/
 ├── hw/
-│   └── hdl/
-│       └── src/              # All synthesizable Verilog RTL modules
-│           ├── bit_source.v
-│           ├── symbol_packer.v
-│           ├── qam_mapper.v
-│           ├── qam_slicer.v
-│           └── ber_counter.v
+│   ├── hdl/
+│   │   └── src/              # All synthesizable Verilog RTL modules
+│   │       ├── bit_source.v
+│   │       ├── symbol_packer.v
+│   │       ├── qam_mapper.v
+│   │       ├── qam_slicer.v
+│   │       ├── ber_counter.v
+│   │       └── qam_loopback_axi.v # Top-level AXI-Lite wrapper
+│   ├── scripts/              # Build automation scripts
+│   │   └── build_pynq_project.tcl
+│   └── build/                # Generated Vivado projects (git-ignored)
+│       └── vivado_project/
+├── sw/
+│   └── pynq/                 # PYNQ deployment artifacts
+│       ├── qam_modem.py      # Python overlay driver
+│       ├── qam_modem.bit     # Synthesized FPGA bitstream
+│       └── qam_modem.hwh     # Hardware handoff file
 ├── models/
 │   └── python/
 │       └── adaptive_qam.py   # Bit-exact Python golden reference model
@@ -42,6 +52,9 @@ QAM-Project/
 
 ### Placement Rules
 - **RTL source files** go in `hw/hdl/src/`. One module per file. Filename matches the module name.
+- **Hardware Scripts** go in `hw/scripts/`. (e.g., Vivado TCL automation).
+- **Vivado Build Output** goes in `hw/build/`. **NEVER** litter the project root with `vivado_project` folders or `.log`/`.jou` files.
+- **Software / Drivers** go in `sw/` (e.g., the python overlay driver and bitstreams for PYNQ go in `sw/pynq/`).
 - **Python golden models** go in `models/python/`. The single file `adaptive_qam.py` contains bit-exact functional models for every RTL block.
 - **Cocotb testbenches** go in `tb/tests/`. One test file per RTL module. Naming convention: `test_<module_name>.py`.
 - **Verilog wrappers** (for integration tests that instantiate multiple RTL modules) go in `tb/wrappers/`.
@@ -284,10 +297,25 @@ When implementing a new block (e.g., block 6 `rrc_fir`), follow this exact seque
 | Clock Period | 10 ns | All cocotb testbenches |
 | Simulator | Icarus Verilog | Default, overridable via `SIM` env var |
 
+## 10. Vivado TCL Scripting & FPGA Implementation Rules
+
+When automating Vivado (specifically Vivado 2025.2 on Ubuntu) via batch TCL scripts, all agents must adhere to the following hard-won rules to prevent catastrophic and silent build failures:
+
+1. **The Ubuntu 22.04 OS-Release Bug**: Vivado's Block Design generator has a bug on Ubuntu 22.04 where it injects raw `/etc/os-release` variables (`VERSION_ID=...`) into generated Verilog headers without proper `//` comment syntax. This causes a `[HDL 9-1206] Syntax error` in `system.v` and `system_wrapper.v`.
+   - **Rule**: ALWAYS run a `sed` cleanup immediately after `generate_target` and `make_wrapper` to strip these lines:
+     ```tcl
+     exec bash -c "find $project_dir -name '*.v' -exec sed -i -e '/^VERSION_ID=/d' -e '/^VERSION_CODENAME=/d' {} +"
+     ```
+2. **Hierarchy Fallback Hazards**: If `system_wrapper` fails to parse (e.g. due to the bug above), Vivado will silently discard your `set_property top system_wrapper` command and fall back to synthesizing the next highest valid module (usually the raw RTL module). This results in `DRC NSTD-1 Unconstrained I/O` errors at the bitstream generation stage. 
+3. **RTL Module References**: Do NOT use `set_property source_mgmt_mode None [current_project]` if the design relies on RTL Module References (`create_bd_cell -type module -reference`). Module References require Vivado's auto-hierarchy engine to parse the RTL files and infer port definitions.
+4. **OOM (Out-Of-Memory) Prevention**: When launching synthesis for a Block Design with multiple Out-Of-Context (OOC) IP blocks, Vivado will attempt to spawn parallel synthesis instances.
+   - **Rule**: ALWAYS restrict the number of parallel jobs to prevent the Linux OOM Killer from terminating the build. Use `launch_runs synth_1 -jobs 2` (or similar low number) instead of `-jobs 8`.
+
 ---
 
-## 10. Current Status & What Comes Next
+## 11. Current Status & What Comes Next
 
 Refer to `README.md` for the full 33-step master roadmap and milestone definitions.
 
-**Milestone 1 is COMPLETE.** All 5 core blocks are implemented, verified across all 4 QAM modes, and committed. The next block to implement is **block 6: `rrc_fir`** (Root Raised Cosine pulse-shaping filter).
+**Milestone 1 is COMPLETE.** All 5 core blocks are implemented, verified across all 4 QAM modes, and committed. The FPGA implementation on PYNQ-Z2 is fully automated and verified. 
+The next block to implement is **block 6: `rrc_fir`** (Root Raised Cosine pulse-shaping filter).

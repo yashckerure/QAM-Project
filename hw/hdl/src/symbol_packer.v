@@ -25,7 +25,7 @@ module symbol_packer #(
     input  wire                  aclk,
     input  wire                  aresetn,
     input  wire  [2:0]           qam_mode,          // 0..3 -> QPSK..256-QAM
-    input  wire                  m_axis_tready,     // 1-clock pulse, downstream ready
+    input  wire                  sym_en,            // 1-clock pulse, symbol boundary strobe
     // upstream interface (from bit_source or, later, from FEC chain)
     input  wire                  s_axis_tdata,
     input  wire                  s_axis_tvalid,
@@ -33,7 +33,8 @@ module symbol_packer #(
     // downstream interface (to qam_mapper)
     output reg   [MAX_BPS-1:0]   m_axis_tdata,
     output reg   [3:0]           m_axis_tuser,
-    output reg                   m_axis_tvalid
+    output reg                   m_axis_tvalid,
+    input  wire                  m_axis_tready      // downstream flow control ready
 );
 
     // -------------------------------------------------------------------------
@@ -61,20 +62,18 @@ module symbol_packer #(
     wire              full = (acc_count == bps);
 
     // -------------------------------------------------------------------------
-    // s_axis_tready: accept a new bit unless we are full and waiting for m_axis_tready
+    // s_axis_tready: accept a new bit unless we are full and waiting to emit
     // -------------------------------------------------------------------------
+    wire out_fire = m_axis_tvalid && m_axis_tready;
+    wire out_ready = !m_axis_tvalid || m_axis_tready;
+    wire move_to_out = full && sym_en && out_ready;
+
     always @(*) begin
-        s_axis_tready = !full;
+        s_axis_tready = !full || move_to_out;
     end
 
     // -------------------------------------------------------------------------
     // Main logic
-    //   - On every clock where s_axis_tvalid && s_axis_tready, shift s_axis_tdata into acc
-    //     at position (bps-1-acc_count). First bit goes to MSB, second to
-    //     next-MSB, and so on.
-    //   - On m_axis_tready, if full, emit m_axis_tdata and reset accumulator.
-    //   - If m_axis_tready arrives while not full (mode change or starvation), emit
-    //     zeros with m_axis_tvalid low - mapper will see invalid and skip.
     // -------------------------------------------------------------------------
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
@@ -84,27 +83,29 @@ module symbol_packer #(
             m_axis_tuser <= 4'd0;
             m_axis_tvalid<= 1'b0;
         end else begin
-            // Default: m_axis_tvalid is a 1-clock pulse, clear it each cycle
-            m_axis_tvalid <= 1'b0;
-
-            // Accept incoming bit if room
-            if (s_axis_tvalid && s_axis_tready) begin
-                acc[bps - 1 - acc_count] <= s_axis_tdata;
-                acc_count                <= acc_count + 4'd1;
+            // Output valid logic
+            if (move_to_out) begin
+                m_axis_tdata  <= acc;
+                m_axis_tuser  <= bps;
+                m_axis_tvalid <= 1'b1;
+            end else if (out_fire) begin
+                m_axis_tvalid <= 1'b0;
             end
 
-            // Emit on symbol boundary if we have a full symbol
-            if (m_axis_tready) begin
-                if (full) begin
-                    m_axis_tdata  <= acc;
-                    m_axis_tuser  <= bps;
-                    m_axis_tvalid <= 1'b1;
-                    // Clear for next symbol
-                    acc           <= {MAX_BPS{1'b0}};
-                    acc_count     <= 4'd0;
+            // Input accumulator logic
+            if (s_axis_tvalid && s_axis_tready) begin
+                if (move_to_out) begin
+                    // acc is being transferred to out, so start a new acc
+                    acc <= {MAX_BPS{1'b0}};
+                    acc[bps - 1] <= s_axis_tdata;
+                    acc_count <= 4'd1;
+                end else begin
+                    acc[bps - 1 - acc_count] <= s_axis_tdata;
+                    acc_count <= acc_count + 4'd1;
                 end
-                // If not full at m_axis_tready, hold accumulator; m_axis_tvalid stays 0
-                // This is the starvation case at Qm > 4 without FEC
+            end else if (move_to_out) begin
+                acc <= {MAX_BPS{1'b0}};
+                acc_count <= 4'd0;
             end
         end
     end

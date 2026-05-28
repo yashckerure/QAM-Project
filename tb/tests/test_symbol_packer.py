@@ -25,6 +25,7 @@ async def test_symbol_packer(dut):
     
     dut.aresetn.value = 0
     dut.m_axis_tready.value = 0
+    dut.sym_en.value = 0
     dut.s_axis_tvalid.value = 0
     dut.s_axis_tdata.value = 0
     await FallingEdge(dut.aclk)
@@ -61,8 +62,9 @@ async def test_symbol_packer(dut):
             else:
                 dut.s_axis_tvalid.value = 0
                 
-            # Strobe sym_en (m_axis_tready) to simulate symbol consumption
+            # Strobe sym_en and tready to simulate symbol consumption
             dut.m_axis_tready.value = 1 # Free running consumption
+            dut.sym_en.value = 1        # Free running timing strobe
             
         dut._log.info(f"Passed {name}!")
 

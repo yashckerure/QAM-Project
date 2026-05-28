@@ -42,7 +42,7 @@ module qam_mapper #(
     input  wire                       m_axis_tready
 );
 
-    assign s_axis_tready = 1'b1;
+
 
     // -------------------------------------------------------------------------
     // Decode mode -> bits per axis
@@ -157,18 +157,23 @@ module qam_mapper #(
     wire signed [DATA_W-1:0] q_q510 = q_sign ? -$signed({1'b0, q_scaled}) : $signed({1'b0, q_scaled});
 
     // -------------------------------------------------------------------------
-    // Register outputs, one-cycle pipeline behind s_axis_tvalid
+    // Register outputs, one-cycle pipeline with AXI stall logic
     // -------------------------------------------------------------------------
+    wire out_ready = !m_axis_tvalid || m_axis_tready;
+    assign s_axis_tready = out_ready;
+
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             m_axis_tdata  <= {(2*DATA_W){1'b0}};
             m_axis_tvalid <= 1'b0;
-        end else if (s_axis_tvalid) begin
-            // Pack Q into upper half, I into lower half
-            m_axis_tdata  <= {q_q510, i_q510};
-            m_axis_tvalid <= 1'b1;
         end else begin
-            m_axis_tvalid <= 1'b0;
+            if (s_axis_tready) begin
+                m_axis_tvalid <= s_axis_tvalid;
+                if (s_axis_tvalid) begin
+                    // Pack Q into upper half, I into lower half
+                    m_axis_tdata <= {q_q510, i_q510};
+                end
+            end
         end
     end
 

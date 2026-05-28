@@ -55,9 +55,9 @@ module tb_ber_counter #(
     );
 
     symbol_packer #(.MAX_BPS(MAX_BPS)) u_pack (
-        .aclk(clk), .aresetn(rst_n), .qam_mode(qam_mode), .m_axis_tready(sym_en),
+        .aclk(clk), .aresetn(rst_n), .qam_mode(qam_mode), .sym_en(sym_en),
         .s_axis_tdata(bit_tdata), .s_axis_tvalid(bit_tvalid), .s_axis_tready(bit_tready),
-        .m_axis_tdata(sym_tdata), .m_axis_tuser(sym_tuser), .m_axis_tvalid(sym_tvalid)
+        .m_axis_tdata(sym_tdata), .m_axis_tuser(sym_tuser), .m_axis_tvalid(sym_tvalid), .m_axis_tready(sym_tready)
     );
 
     qam_mapper #(.DATA_W(DATA_W), .FRAC_W(10), .MAX_BPS(MAX_BPS)) u_map (
@@ -76,12 +76,12 @@ module tb_ber_counter #(
     ber_counter #(
         .LFSR_W          (23),
         .SEED            (23'h5A3C7E),
-        .MAX_BPS         (MAX_BPS),
-        .NUM_BITS_TARGET (NUM_BITS_TARGET)
+        .MAX_BPS         (MAX_BPS)
     ) u_ber (
         .aclk            (clk),
         .aresetn         (rst_n),
         .enable          (ber_enable),
+        .num_bits_target (NUM_BITS_TARGET),
         .s_axis_tdata    (sliced_tdata),
         .s_axis_tuser    (sliced_tuser),
         .s_axis_tvalid   (sliced_tvalid),

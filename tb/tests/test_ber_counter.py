@@ -14,7 +14,7 @@ async def test_ber_counter(dut):
     
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
 
-    cases = [(0, 2, "QPSK"), (1, 4, "16QAM")]
+    cases = [(0, 2, "QPSK"), (1, 4, "16QAM"), (2, 6, "64QAM"), (3, 8, "256QAM")]
     SPS = 4
     
     dut.rst_n.value = 0

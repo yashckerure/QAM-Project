@@ -19,7 +19,7 @@ async def test_qam_slicer(dut):
     
     cocotb.start_soon(Clock(dut.aclk, 10, unit="ns").start())
 
-    cases = [(0, 2, "QPSK"), (1, 4, "16QAM")]
+    cases = [(0, 2, "QPSK"), (1, 4, "16QAM"), (2, 6, "64QAM"), (3, 8, "256QAM")]
     NUM_SYMS = 64
     SEED = 0x5A3C7E
     

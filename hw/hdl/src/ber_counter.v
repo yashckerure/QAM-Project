@@ -27,12 +27,12 @@
 module ber_counter #(
     parameter integer LFSR_W           = 23,
     parameter [LFSR_W-1:0] SEED        = 23'h5A3C7E,
-    parameter integer MAX_BPS          = 8,
-    parameter integer NUM_BITS_TARGET  = 32'd4096
+    parameter integer MAX_BPS          = 8
 )(
     input  wire                  aclk,
     input  wire                  aresetn,
     input  wire                  enable,
+    input  wire  [31:0]          num_bits_target,
     input  wire  [MAX_BPS-1:0]   s_axis_tdata,
     input  wire  [3:0]           s_axis_tuser,
     input  wire                  s_axis_tvalid,
@@ -111,7 +111,7 @@ module ber_counter #(
             bit_errors    <= bit_errors    + {28'd0, n_mismatch};
             bits_compared <= bits_compared + {28'd0, n_bits};
 
-            if ((bits_compared + n_bits) >= NUM_BITS_TARGET) begin
+            if ((bits_compared + n_bits) >= num_bits_target) begin
                 status_done <= 1'b1;
             end
         end
