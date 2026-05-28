@@ -1,33 +1,13 @@
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 08.05.2026 19:38:56
-// Design Name: 
-// Module Name: qam_mapper
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-//-----------------------------------------------------------------------------
-// qam_mapper.v
-// Square-QAM Gray-coded mapper for adaptive modem.
-//   - Supports QPSK / 16 / 64 / 256 / 1024-QAM
-//   - Arithmetic Gray-to-PAM-level conversion (no large ROM)
-//   - Output format: signed 16-bit Q5.10
-//   - Zero-stuffing upsampling at 4 SPS (zero output between symbols)
-//-----------------------------------------------------------------------------
-//-----------------------------------------------------------------------------
-// qam_mapper.v
-// Square-QAM mapper using arithmetic Gray-PAM.
+//=============================================================================
+// Project      : Adaptive QAM Modem
+// File         : qam_mapper.v
+// Description  : Square-QAM Gray-coded mapper for adaptive modem.
+//=============================================================================
+// Additional Notes:
+// - Supports QPSK / 16 / 64 / 256 / 1024-QAM
+// - Arithmetic Gray-to-PAM-level conversion (no large ROM)
+// - Output format: signed 16-bit Q5.10
+//=============================================================================
 // Modes: 0=QPSK, 1=16QAM, 2=64QAM, 3=256QAM (bps_axis = 1, 2, 3, 4).
 //
 // Bit layout of sym_bits[7:0] (MSB-first):
@@ -50,16 +30,19 @@ module qam_mapper #(
     parameter integer FRAC_W  = 10,
     parameter integer MAX_BPS = 8
 )(
-    input  wire                       clk,
-    input  wire                       rst_n,
+    input  wire                       aclk,
+    input  wire                       aresetn,
     input  wire  [2:0]                qam_mode,
-    input  wire  [MAX_BPS-1:0]        sym_bits,
-    input  wire  [3:0]                bits_used,
-    input  wire                       sym_valid,
-    output reg   signed [DATA_W-1:0]  i_out,
-    output reg   signed [DATA_W-1:0]  q_out,
-    output reg                        iq_valid
+    input  wire  [MAX_BPS-1:0]        s_axis_tdata,
+    input  wire  [3:0]                s_axis_tuser,
+    input  wire                       s_axis_tvalid,
+    output wire                       s_axis_tready,
+    output reg   [2*DATA_W-1:0]       m_axis_tdata,
+    output reg                        m_axis_tvalid,
+    input  wire                       m_axis_tready
 );
+
+    assign s_axis_tready = 1'b1;
 
     // -------------------------------------------------------------------------
     // Decode mode -> bits per axis
@@ -91,8 +74,8 @@ module qam_mapper #(
         q_gray = 4'd0;
         for (k = 0; k < 4; k = k + 1) begin
             if (k < bps_axis) begin
-                i_gray[k] = sym_bits[bps_axis + k];   // upper half, indexed from low
-                q_gray[k] = sym_bits[k];              // lower half
+                i_gray[k] = s_axis_tdata[bps_axis + k];   // upper half, indexed from low
+                q_gray[k] = s_axis_tdata[k];              // lower half
             end
         end
     end
@@ -159,19 +142,18 @@ module qam_mapper #(
     wire signed [DATA_W-1:0] q_q510 = $signed(q_level) <<< FRAC_W;
 
     // -------------------------------------------------------------------------
-    // Register outputs, one-cycle pipeline behind sym_valid
+    // Register outputs, one-cycle pipeline behind s_axis_tvalid
     // -------------------------------------------------------------------------
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            i_out    <= {DATA_W{1'b0}};
-            q_out    <= {DATA_W{1'b0}};
-            iq_valid <= 1'b0;
-        end else if (sym_valid) begin
-            i_out    <= i_q510;
-            q_out    <= q_q510;
-            iq_valid <= 1'b1;
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            m_axis_tdata  <= {(2*DATA_W){1'b0}};
+            m_axis_tvalid <= 1'b0;
+        end else if (s_axis_tvalid) begin
+            // Pack Q into upper half, I into lower half
+            m_axis_tdata  <= {q_q510, i_q510};
+            m_axis_tvalid <= 1'b1;
         end else begin
-            iq_valid <= 1'b0;
+            m_axis_tvalid <= 1'b0;
         end
     end
 

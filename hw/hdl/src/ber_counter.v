@@ -1,25 +1,11 @@
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 27.05.2026 21:12:09
-// Design Name: 
-// Module Name: ber_counter
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-//-----------------------------------------------------------------------------
-// ber_counter.v
-// Cumulative BER counter for the adaptive QAM loopback.
+//=============================================================================
+// Project      : Adaptive QAM Modem
+// File         : ber_counter.v
+// Description  : Cumulative BER counter for the adaptive QAM loopback.
+//=============================================================================
+// Additional Notes:
+// - Holds its own PRBS-23 generator with the SAME seed as the TX bit_source.
+//=============================================================================
 //
 // Operation:
 //   - Holds its own PRBS-23 generator with the SAME seed as the TX bit_source.
@@ -44,16 +30,19 @@ module ber_counter #(
     parameter integer MAX_BPS          = 8,
     parameter integer NUM_BITS_TARGET  = 32'd4096
 )(
-    input  wire                  clk,
-    input  wire                  rst_n,
+    input  wire                  aclk,
+    input  wire                  aresetn,
     input  wire                  enable,
-    input  wire  [MAX_BPS-1:0]   sliced_bits,
-    input  wire  [3:0]           sliced_bits_used,
-    input  wire                  sliced_valid,
+    input  wire  [MAX_BPS-1:0]   s_axis_tdata,
+    input  wire  [3:0]           s_axis_tuser,
+    input  wire                  s_axis_tvalid,
+    output wire                  s_axis_tready,
     output reg   [31:0]          bit_errors,
     output reg   [31:0]          bits_compared,
     output reg                   status_done
 );
+
+    assign s_axis_tready = 1'b1;
 
     // -------------------------------------------------------------------------
     // Local PRBS state
@@ -81,22 +70,22 @@ module ber_counter #(
 
     always @(*) begin
         lfsr_w_var      = lfsr;
-        bits_to_check   = sliced_bits;
+        bits_to_check   = s_axis_tdata;
         prbs_bits_local = 8'd0;
         mismatch_mask   = 8'd0;
         n_mismatch      = 4'd0;
-        n_bits          = sliced_bits_used;
+        n_bits          = s_axis_tuser;
 
         for (i = 0; i < MAX_BPS; i = i + 1) begin
-            if (i < sliced_bits_used) begin
+            if (i < s_axis_tuser) begin
                 // MSB-first: first bit out of PRBS corresponds to the highest
-                // bit position in sliced_bits (position sliced_bits_used-1-i)
+                // bit position in s_axis_tdata (position s_axis_tuser-1-i)
                 prbs_bit   = lfsr_w_var[LFSR_W-1];
-                slicer_bit = bits_to_check[sliced_bits_used - 1 - i];
+                slicer_bit = bits_to_check[s_axis_tuser - 1 - i];
 
-                prbs_bits_local[sliced_bits_used - 1 - i] = prbs_bit;
+                prbs_bits_local[s_axis_tuser - 1 - i] = prbs_bit;
                 if (prbs_bit != slicer_bit) begin
-                    mismatch_mask[sliced_bits_used - 1 - i] = 1'b1;
+                    mismatch_mask[s_axis_tuser - 1 - i] = 1'b1;
                     n_mismatch = n_mismatch + 4'd1;
                 end
 
@@ -111,13 +100,13 @@ module ber_counter #(
     // -------------------------------------------------------------------------
     // Sequential update
     // -------------------------------------------------------------------------
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
             lfsr          <= SEED;
             bit_errors    <= 32'd0;
             bits_compared <= 32'd0;
             status_done   <= 1'b0;
-        end else if (enable && sliced_valid && !status_done) begin
+        end else if (enable && s_axis_tvalid && !status_done) begin
             lfsr          <= lfsr_w_var;
             bit_errors    <= bit_errors    + {28'd0, n_mismatch};
             bits_compared <= bits_compared + {28'd0, n_bits};

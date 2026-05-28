@@ -1,29 +1,13 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 27.05.2026 21:02:51
-// Design Name: 
-// Module Name: qam_slicer
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-//-----------------------------------------------------------------------------
-// qam_slicer.v
-// Hard-decision inverse QAM mapper.
-// Inputs:  Q5.10 signed I, Q from the mapper (or, later, the matched filter)
-// Outputs: Qm-bit symbol, MSB-first, ready to feed back to BER counter or
-//          symbol-unpacker.
+//=============================================================================
+// Project      : Adaptive QAM Modem
+// File         : qam_slicer.v
+// Description  : Hard-decision inverse QAM mapper (slicer).
+//=============================================================================
+// Additional Notes:
+// - Inputs:  Q5.10 signed I, Q from the mapper (or, later, the matched filter)
+// - Outputs: Qm-bit symbol, MSB-first, ready to feed back to BER counter.
+//=============================================================================
 //
 // This is the exact arithmetic inverse of qam_mapper.v. In the absence of a
 // channel or filter, slicer output should equal mapper input bit-for-bit.
@@ -35,16 +19,22 @@ module qam_slicer #(
     parameter integer FRAC_W  = 10,
     parameter integer MAX_BPS = 8
 )(
-    input  wire                       clk,
-    input  wire                       rst_n,
+    input  wire                       aclk,
+    input  wire                       aresetn,
     input  wire  [2:0]                qam_mode,
-    input  wire  signed [DATA_W-1:0]  i_in,
-    input  wire  signed [DATA_W-1:0]  q_in,
-    input  wire                       iq_valid,
-    output reg   [MAX_BPS-1:0]        sym_bits,
-    output reg   [3:0]                bits_used,
-    output reg                        sym_valid
+    input  wire  [2*DATA_W-1:0]       s_axis_tdata,
+    input  wire                       s_axis_tvalid,
+    output wire                       s_axis_tready,
+    output reg   [MAX_BPS-1:0]        m_axis_tdata,
+    output reg   [3:0]                m_axis_tuser,
+    output reg                        m_axis_tvalid,
+    input  wire                       m_axis_tready
 );
+
+    assign s_axis_tready = 1'b1;
+
+    wire signed [DATA_W-1:0] i_in = s_axis_tdata[DATA_W-1:0];
+    wire signed [DATA_W-1:0] q_in = s_axis_tdata[2*DATA_W-1:DATA_W];
 
     // -------------------------------------------------------------------------
     // Decode mode
@@ -148,19 +138,19 @@ module qam_slicer #(
     end
 
     // -------------------------------------------------------------------------
-    // Register outputs, one-cycle pipeline behind iq_valid
+    // Register outputs, one-cycle pipeline behind s_axis_tvalid
     // -------------------------------------------------------------------------
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            sym_bits  <= {MAX_BPS{1'b0}};
-            bits_used <= 4'd0;
-            sym_valid <= 1'b0;
-        end else if (iq_valid) begin
-            sym_bits  <= sym_pack;
-            bits_used <= bps_total;
-            sym_valid <= 1'b1;
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            m_axis_tdata  <= {MAX_BPS{1'b0}};
+            m_axis_tuser  <= 4'd0;
+            m_axis_tvalid <= 1'b0;
+        end else if (s_axis_tvalid) begin
+            m_axis_tdata  <= sym_pack;
+            m_axis_tuser  <= bps_total;
+            m_axis_tvalid <= 1'b1;
         end else begin
-            sym_valid <= 1'b0;
+            m_axis_tvalid <= 1'b0;
         end
     end
 

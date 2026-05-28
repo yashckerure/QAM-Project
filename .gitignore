@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*~
+*.swp
+
+# Cocotb / Icarus Verilog Simulation Artifacts
+sim/sim_build/
+sim/waves/
+*.fst
+*.vcd
+*.out
+results.xml
+
+# Xilinx Vivado / Vitis Artifacts (for future deployment)
+*.jou
+*.log
+*.str
+*.pb
+.Xil/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.wdb
+*.wcfg
