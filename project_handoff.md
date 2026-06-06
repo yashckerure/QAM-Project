@@ -186,8 +186,8 @@ in fixed point). LLR deinterleaver round-trips 1040 LLRs exact.
   For K=520 the regime is C=1 (single code block); verify 5.2.2: when C=1 no
   CRC-24B is attached. Must be a standards-compliant block implementing the general
   rule, even though it is near-pass-through at current sizes.
-- **rate_match** — TS 38.212 5.4.2: sub-block interleaver + circular-buffer bit
-  selection (RV=0). Output length **E is a runtime input** (E in {1040, 624, ...}
+- **rate_match** — TS 38.212 5.4.2: bit selection only (no sub-block interleaver).
+- Output length **E is a runtime input** (E in {1040, 624, ...}
   per the MCS table). Decision: the 5.4.2.2 bit interleaver stays a SEPARATE
   downstream block (existing `bit_interleaver`), so rate_match = sub-block
   interleave + selection only. Build path: first verify whether a MathWorks HDL
